@@ -6,6 +6,17 @@ from kademlia.network import Server
 from random import choice, sample
 import psutil
 
+def kill_process_by_port(port):
+    for conn in psutil.net_connections(kind='inet'):
+        if conn.laddr.port == port:
+            try:
+                process = psutil.Process(conn.pid)
+                process.terminate()
+                print(f"Process using port {port} terminated.")
+            except psutil.NoSuchProcess:
+                print(f"No process using port {port} found.")
+            return
+
 def main(num_nodes, num_sets, num_gets):
     logging.basicConfig(level=logging.INFO, filename='network.log', filemode='w')
 
@@ -23,21 +34,28 @@ def main(num_nodes, num_sets, num_gets):
         # Create other nodes and bootstrap them to a random existing node
         nodes = [node1]
         for i in range(2, num_nodes + 1):
-            retries = 5
             node = Server()
             await node.listen(8468 + i)
-            bootstrap_node = choice(nodes)
-            bootstrap_port = 8468 + nodes.index(bootstrap_node)                
+
+            retries = 5
             for attempt in range(retries):
+                bootstrap_node = choice(nodes)
+                bootstrap_port = 8468 + nodes.index(bootstrap_node)                
+
                 try:
-                    await node.bootstrap([("localhost", bootstrap_port)])
-                    logging.info(f"Node {i} successfully connected on attempt {attempt + 1}")
-                    break
+                    res = await node.bootstrap([("localhost", bootstrap_port)])
+                    if not res:
+                        logging.error(f"Attempt {attempt + 1} to connect node {i} returned an empty result.")
+                    else:
+                        logging.info(f"res: %s", str(res))
+                        logging.info(f"Node {i} successfully connected on attempt {attempt + 1}")
+                        break
                 except Exception as e:
                     logging.error(f"Attempt {attempt + 1} to connect node {i} failed: {e}")
                     if attempt == retries - 1:
                         logging.error(f"Node {i} failed to connect after {retries} attempts")
                     else:
+                        await kill_process_by_port(8468 + i)
                         node.stop()
                         await asyncio.sleep(2**attempt)  # Exponential backoff
             nodes.append(node)
